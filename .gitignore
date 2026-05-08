@@ -1,12 +1,6 @@
 node_modules/
-dist/
-*.js
-*.d.ts
-*.d.ts.map
-.DS_Store
 .env
 .env.local
-*.log
 npm-debug.log
 yarn-error.log
 .vscode/
