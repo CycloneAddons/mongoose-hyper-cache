@@ -5,53 +5,29 @@
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.QueryPatcher = void 0;
-// Helper to create chainable query object
-function createQueryChain(results, selectedFields) {
-    const applySelect = (docs) => {
-        if (!selectedFields || selectedFields.size === 0)
-            return docs;
-        if (!Array.isArray(docs)) {
-            // Single document
-            const doc = { ...docs };
-            const filtered = {};
-            selectedFields.forEach(field => {
-                if (field in doc)
-                    filtered[field] = doc[field];
-            });
-            return filtered;
-        }
-        // Array of documents
-        return docs.map(doc => {
-            const filtered = {};
-            selectedFields.forEach(field => {
-                if (field in doc)
-                    filtered[field] = doc[field];
-            });
-            return filtered;
-        });
+// Create a proxy object that acts like the document but supports chaining
+function createDocumentProxy(data) {
+    const chainMethods = {
+        select: (fields) => createDocumentProxy(data),
+        lean: () => ({
+            exec: () => data,
+            then: (resolve) => Promise.resolve(data).then(resolve),
+            catch: (reject) => Promise.resolve(data).catch(reject),
+        }),
+        exec: () => data,
+        then: (resolve) => Promise.resolve(data).then(resolve),
+        catch: (reject) => Promise.resolve(data).catch(reject),
     };
-    const selected = selectedFields && selectedFields.size > 0 ? applySelect(results) : results;
-    return {
-        select: (fields) => {
-            const fieldSet = new Set(fields.split(' ').filter(f => f));
-            return createQueryChain(results, fieldSet);
+    return new Proxy(data || {}, {
+        get(target, prop) {
+            // Chain methods take priority
+            if (prop in chainMethods) {
+                return chainMethods[prop];
+            }
+            // Otherwise return document property
+            return target?.[prop];
         },
-        lean: () => {
-            // Return a thenable object so await works
-            return {
-                exec: () => selected,
-                select: (fields) => {
-                    const fieldSet = new Set(fields.split(' ').filter(f => f));
-                    return createQueryChain(results, fieldSet).lean();
-                },
-                then: (resolve) => Promise.resolve(selected).then(resolve),
-                catch: (reject) => Promise.resolve(selected).catch(reject),
-            };
-        },
-        exec: () => selected,
-        then: (resolve) => Promise.resolve(selected).then(resolve),
-        catch: (reject) => Promise.resolve(selected).catch(reject),
-    };
+    });
 }
 class QueryPatcher {
     /**
@@ -65,7 +41,18 @@ class QueryPatcher {
             // Direct synchronous call - returns results immediately
             try {
                 const results = cacheManager.find(modelName, filter || {}, options || {});
-                return createQueryChain(results);
+                // For arrays, create wrapper that acts like array with chain methods
+                const wrapper = (results || []);
+                wrapper.lean = () => ({
+                    exec: () => wrapper,
+                    then: (resolve) => Promise.resolve(wrapper).then(resolve),
+                    catch: (reject) => Promise.resolve(wrapper).catch(reject),
+                });
+                wrapper.select = () => wrapper;
+                wrapper.exec = () => wrapper;
+                wrapper.then = (resolve) => Promise.resolve(wrapper).then(resolve);
+                wrapper.catch = (reject) => Promise.resolve(wrapper).catch(reject);
+                return wrapper;
             }
             catch (err) {
                 if (debug)
@@ -84,7 +71,7 @@ class QueryPatcher {
                 console.log(`[QueryPatch] findOne() called`);
             try {
                 const result = cacheManager.findOne(modelName, filter || {});
-                return createQueryChain(result);
+                return createDocumentProxy(result);
             }
             catch (err) {
                 if (debug)
@@ -103,7 +90,7 @@ class QueryPatcher {
                 console.log(`[QueryPatch] findById() called:`, id);
             try {
                 const result = cacheManager.findById(modelName, id);
-                return createQueryChain(result);
+                return createDocumentProxy(result);
             }
             catch (err) {
                 if (debug)

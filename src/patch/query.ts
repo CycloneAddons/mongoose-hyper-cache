@@ -6,52 +6,30 @@
 import { Model } from 'mongoose';
 import { CacheManager } from '../cache/manager';
 
-// Helper to create chainable query object
-function createQueryChain(results: any, selectedFields?: Set<string>) {
-  const applySelect = (docs: any) => {
-    if (!selectedFields || selectedFields.size === 0) return docs;
-    if (!Array.isArray(docs)) {
-      // Single document
-      const doc = { ...docs };
-      const filtered: any = {};
-      selectedFields.forEach(field => {
-        if (field in doc) filtered[field] = doc[field];
-      });
-      return filtered;
-    }
-    // Array of documents
-    return docs.map(doc => {
-      const filtered: any = {};
-      selectedFields.forEach(field => {
-        if (field in doc) filtered[field] = doc[field];
-      });
-      return filtered;
-    });
+// Create a proxy object that acts like the document but supports chaining
+function createDocumentProxy(data: any) {
+  const chainMethods = {
+    select: (fields: string) => createDocumentProxy(data),
+    lean: () => ({
+      exec: () => data,
+      then: (resolve: any) => Promise.resolve(data).then(resolve),
+      catch: (reject: any) => Promise.resolve(data).catch(reject),
+    }),
+    exec: () => data,
+    then: (resolve: any) => Promise.resolve(data).then(resolve),
+    catch: (reject: any) => Promise.resolve(data).catch(reject),
   };
 
-  const selected = selectedFields && selectedFields.size > 0 ? applySelect(results) : results;
-
-  return {
-    select: (fields: string) => {
-      const fieldSet = new Set(fields.split(' ').filter(f => f));
-      return createQueryChain(results, fieldSet);
+  return new Proxy(data || {}, {
+    get(target: any, prop: string) {
+      // Chain methods take priority
+      if (prop in chainMethods) {
+        return (chainMethods as any)[prop];
+      }
+      // Otherwise return document property
+      return target?.[prop];
     },
-    lean: () => {
-      // Return a thenable object so await works
-      return {
-        exec: () => selected,
-        select: (fields: string) => {
-          const fieldSet = new Set(fields.split(' ').filter(f => f));
-          return createQueryChain(results, fieldSet).lean();
-        },
-        then: (resolve: any) => Promise.resolve(selected).then(resolve),
-        catch: (reject: any) => Promise.resolve(selected).catch(reject),
-      };
-    },
-    exec: () => selected,
-    then: (resolve: any) => Promise.resolve(selected).then(resolve),
-    catch: (reject: any) => Promise.resolve(selected).catch(reject),
-  };
+  });
 }
 
 export class QueryPatcher {
@@ -72,7 +50,18 @@ export class QueryPatcher {
       // Direct synchronous call - returns results immediately
       try {
         const results = cacheManager.find(modelName, filter || {}, options || {});
-        return createQueryChain(results);
+        // For arrays, create wrapper that acts like array with chain methods
+        const wrapper = (results || []) as any;
+        wrapper.lean = () => ({
+          exec: () => wrapper,
+          then: (resolve: any) => Promise.resolve(wrapper).then(resolve),
+          catch: (reject: any) => Promise.resolve(wrapper).catch(reject),
+        });
+        wrapper.select = () => wrapper;
+        wrapper.exec = () => wrapper;
+        wrapper.then = (resolve: any) => Promise.resolve(wrapper).then(resolve);
+        wrapper.catch = (reject: any) => Promise.resolve(wrapper).catch(reject);
+        return wrapper;
       } catch (err) {
         if (debug) console.log('[QueryPatch] Cache miss, falling back to MongoDB');
         return originalFind.call(this, filter, projection, options);
@@ -96,7 +85,7 @@ export class QueryPatcher {
       
       try {
         const result = cacheManager.findOne(modelName, filter || {});
-        return createQueryChain(result);
+        return createDocumentProxy(result);
       } catch (err) {
         if (debug) console.log('[QueryPatch] Cache miss, falling back to MongoDB');
         return originalFindOne.call(this, filter, projection, options);
@@ -120,7 +109,7 @@ export class QueryPatcher {
       
       try {
         const result = cacheManager.findById(modelName, id);
-        return createQueryChain(result);
+        return createDocumentProxy(result);
       } catch (err) {
         if (debug) console.log('[QueryPatch] Cache miss, falling back to MongoDB');
         return originalFindById.call(this, id, projection, options);
