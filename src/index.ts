@@ -3,6 +3,8 @@
  * High-performance Mongoose caching layer with memory/Redis providers
  */
 
+import fs from 'fs';
+import path from 'path';
 import mongoose, { Model } from 'mongoose';
 import { HyperCacheOptions, CacheProvider } from './types';
 import { createProvider } from './providers';
@@ -19,6 +21,44 @@ export interface HyperCacheInstance {
   stats(): any;
   clear(): Promise<void>;
   destroy(): Promise<void>;
+}
+
+function loadModelFile(filePath: string): void {
+  const resolvedPath = path.resolve(process.cwd(), filePath);
+
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`Model path not found: ${resolvedPath}`);
+  }
+
+  const stats = fs.statSync(resolvedPath);
+  if (stats.isDirectory()) {
+    const entries = fs.readdirSync(resolvedPath);
+    for (const entry of entries) {
+      loadModelFile(path.join(resolvedPath, entry));
+    }
+    return;
+  }
+
+  if (resolvedPath.endsWith('.d.ts')) {
+    return;
+  }
+
+  if (!/\.(js|cjs|mjs|ts)$/i.test(resolvedPath)) {
+    return;
+  }
+
+  require(resolvedPath);
+}
+
+function loadModelsFromPaths(modelPaths: string | string[] | undefined, debug: boolean): void {
+  if (!modelPaths || modelPaths.length === 0) return;
+
+  const paths = Array.isArray(modelPaths) ? modelPaths : [modelPaths];
+
+  for (const modelPath of paths) {
+    if (debug) console.log(`[HyperCache] Loading model path: ${modelPath}`);
+    loadModelFile(modelPath);
+  }
 }
 
 /**
@@ -38,6 +78,9 @@ async function init(
   if (!options.provider) {
     throw new Error('Provider type is required (memory, redis, or memory+redis)');
   }
+
+  // Load model files before discovery when paths are provided
+  loadModelsFromPaths(options.modelPaths, debug);
 
   // Create cache provider
   const provider = await createProvider(options);

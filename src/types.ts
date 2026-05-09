@@ -5,6 +5,9 @@
 export interface HyperCacheOptions {
   /** Provider type: "memory", "redis", or "memory+redis" */
   provider: 'memory' | 'redis' | 'memory+redis';
+
+  /** Optional model file path, file list, or directories to load before discovery */
+  modelPaths?: string | string[];
   
   /** Warm all collections on startup */
   warmOnStartup?: boolean;

@@ -101,6 +101,9 @@ interface HyperCacheOptions {
   // Required: cache provider type
   provider: 'memory' | 'redis' | 'memory+redis';
 
+  // Optional model files or directories to load before discovery
+  modelPaths?: string[];
+
   // Load all collections into cache on startup
   warmOnStartup?: boolean;
 

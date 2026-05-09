@@ -36,16 +36,21 @@ function createQueryChain(results: any, selectedFields?: Set<string>) {
       const fieldSet = new Set(fields.split(' ').filter(f => f));
       return createQueryChain(results, fieldSet);
     },
-    lean: () => ({
-      exec: () => selected,
-      select: (fields: string) => {
-        const fieldSet = new Set(fields.split(' ').filter(f => f));
-        return { exec: () => applySelect(results) };
-      },
-    }),
+    lean: () => {
+      // Return a thenable object so await works
+      return {
+        exec: () => selected,
+        select: (fields: string) => {
+          const fieldSet = new Set(fields.split(' ').filter(f => f));
+          return createQueryChain(results, fieldSet).lean();
+        },
+        then: (resolve: any) => Promise.resolve(selected).then(resolve),
+        catch: (reject: any) => Promise.resolve(selected).catch(reject),
+      };
+    },
     exec: () => selected,
     then: (resolve: any) => Promise.resolve(selected).then(resolve),
-    catch: () => ({ then: (resolve: any) => Promise.resolve(selected).then(resolve) }),
+    catch: (reject: any) => Promise.resolve(selected).catch(reject),
   };
 }
 
