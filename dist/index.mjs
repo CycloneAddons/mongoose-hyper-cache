@@ -3,15 +3,51 @@
  * mongoose-hyper-cache - Main entry point
  * High-performance Mongoose caching layer with memory/Redis providers
  */
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 
 exports.QueryOperators = exports.DocumentMatcher = exports.CacheManager = void 0;
 exports.init = init;
+const fs_1 = __importDefault(require("fs"));
+const path_1 = __importDefault(require("path"));
 import providers_1 from ""./providers";
 import manager_1 from ""./cache/manager";
 import warm_1 from ""./startup/warm";
 import change_stream_1 from ""./sync/change-stream";
 import query_1 from ""./patch/query";
 import write_1 from ""./patch/write";
+function loadModelFile(filePath) {
+    const resolvedPath = path_1.default.resolve(process.cwd(), filePath);
+    if (!fs_1.default.existsSync(resolvedPath)) {
+        throw new Error(`Model path not found: ${resolvedPath}`);
+    }
+    const stats = fs_1.default.statSync(resolvedPath);
+    if (stats.isDirectory()) {
+        const entries = fs_1.default.readdirSync(resolvedPath);
+        for (const entry of entries) {
+            loadModelFile(path_1.default.join(resolvedPath, entry));
+        }
+        return;
+    }
+    if (resolvedPath.endsWith('.d.ts')) {
+        return;
+    }
+    if (!/\.(js|cjs|mjs|ts)$/i.test(resolvedPath)) {
+        return;
+    }
+    require(resolvedPath);
+}
+function loadModelsFromPaths(modelPaths, debug) {
+    if (!modelPaths || modelPaths.length === 0)
+        return;
+    const paths = Array.isArray(modelPaths) ? modelPaths : [modelPaths];
+    for (const modelPath of paths) {
+        if (debug)
+            console.log(`[HyperCache] Loading model path: ${modelPath}`);
+        loadModelFile(modelPath);
+    }
+}
 /**
  * Initialize mongoose-hyper-cache
  */
@@ -24,6 +60,8 @@ async function init(mongooseInstance, options) {
     if (!options.provider) {
         throw new Error('Provider type is required (memory, redis, or memory+redis)');
     }
+    // Load model files before discovery when paths are provided
+    loadModelsFromPaths(options.modelPaths, debug);
     // Create cache provider
     const provider = await (0, providers_1.createProvider)(options);
     const cacheManager = new manager_1.CacheManager(provider, debug);
